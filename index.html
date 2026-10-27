@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Online IPTV Player</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, sans-serif; }
+    body { background: #121212; color: #fff; height: 100vh; display: flex; }
+    .hidden { display: none !important; }
+
+    #login-box { margin: auto; background: #1e1e1e; padding: 30px; border-radius: 8px; width: 340px; }
+    input { width: 100%; padding: 12px; margin-bottom: 12px; background: #2a2a2a; border: 1px solid #444; color: #fff; border-radius: 4px; }
+    button { width: 100%; padding: 12px; background: #e50914; border: 0; color: #fff; font-weight: bold; cursor: pointer; border-radius: 4px; }
+    .err { color: #ff5252; margin-top: 10px; font-size: 14px; text-align: center; }
+
+    #app { display: flex; width: 100vw; height: 100vh; }
+    aside { width: 320px; background: #1a1a1a; display: flex; flex-direction: column; border-right: 1px solid #333; }
+    select { margin: 10px; padding: 10px; background: #2a2a2a; color: #fff; border: 1px solid #444; }
+    ul { list-style: none; overflow-y: auto; flex: 1; }
+    li { padding: 12px; border-bottom: 1px solid #282828; cursor: pointer; font-size: 14px; }
+    li:hover { background: #333; }
+    li.active { background: #e50914; }
+    
+    main { flex: 1; display: flex; flex-direction: column; background: #000; }
+    video { width: 100%; height: calc(100vh - 50px); }
+    #status { height: 50px; line-height: 50px; padding-left: 20px; background: #181818; font-size: 14px; }
+  </style>
+</head>
+<body>
+
+  <div id="login-box">
+    <h2 style="margin-bottom: 15px;">IPTV Login</h2>
+    <input id="server" placeholder="Server URL (e.g. http://my-iptv.com:80)" />
+    <input id="user" placeholder="Username" />
+    <input id="pass" type="password" placeholder="Password" />
+    <button onclick="login()">Connect</button>
+    <div id="err" class="err"></div>
+  </div>
+
+  <div id="app" class="hidden">
+    <aside>
+      <select id="cats" onchange="loadChannels()"><option>Select Category...</option></select>
+      <ul id="channels"></ul>
+    </aside>
+    <main>
+      <video id="player" controls autoplay></video>
+      <div id="status">Select a channel to play</div>
+    </main>
+  </div>
+
+  <script>
+    let session = {}, hls = null;
+
+    async function login() {
+      session = {
+        server: document.getElementById('server').value.trim(),
+        username: document.getElementById('user').value.trim(),
+        password: document.getElementById('pass').value.trim()
+      };
+      document.getElementById('err').innerText = 'Connecting...';
+
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(session)
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        document.getElementById('login-box').classList.add('hidden');
+        document.getElementById('app').classList.remove('hidden');
+        loadCategories();
+      } else {
+        document.getElementById('err').innerText = data.message || 'Login failed';
+      }
+    }
+
+    async function loadCategories() {
+      const res = await fetch('/api/categories', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(session)
+      });
+      const cats = await res.json();
+      const sel = document.getElementById('cats');
+      sel.innerHTML = '<option value="">Select Category...</option>';
+      cats.forEach(c => sel.innerHTML += `<option value="${c.category_id}">${c.category_name}</option>`);
+    }
+
+    async function loadChannels() {
+      const catId = document.getElementById('cats').value;
+      if (!catId) return;
+      const res = await fetch('/api/streams', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({...session, category_id: catId})
+      });
+      const list = await res.json();
+      const ul = document.getElementById('channels');
+      ul.innerHTML = '';
+      list.forEach(ch => {
+        const li = document.createElement('li');
+        li.innerText = ch.name;
+        li.onclick = () => {
+          document.querySelectorAll('li').forEach(el => el.classList.remove('active'));
+          li.classList.add('active');
+          playStream(ch);
+        };
+        ul.appendChild(li);
+      });
+    }
+
+    function playStream(ch) {
+      document.getElementById('status').innerText = 'Playing: ' + ch.name;
+      const streamUrl = `${session.server.replace(/\/+$/, '')}/live/${session.username}/${session.password}/${ch.stream_id}.m3u8`;
+      const proxiedUrl = `/api/proxy?url=${encodeURIComponent(streamUrl)}`;
+      const video = document.getElementById('player');
+
+      if (hls) hls.destroy();
+      if (Hls.isSupported()) {
+        hls = new Hls();
+        hls.loadSource(proxiedUrl);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => video.play());
+      } else {
+        video.src = proxiedUrl;
+        video.play();
+      }
+    }
+  </script>
+</body>
+</html>
